@@ -1,0 +1,616 @@
+---
+title: "Initial Exploratory Data Visualizations"
+author: "Mervin M Fansler"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: 
+  html_document: 
+    code_folding: hide
+    toc: true
+    toc_float: true
+---
+
+# Purpose
+
+Here we have an initial foray into plotting some of the covariate values, such as 
+RNA-binding protein associations, with respect to the readout of partition coefficients.
+Since there are three partitions that are compositional, we can use ternary plots 
+to represent the readout space.
+
+# Initialization
+
+## Libraries
+```{r libs, message=FALSE, warning=FALSE}
+library(magrittr)
+library(tidyverse)
+library(ggtern)
+library(ggridges)
+library(gtsummary)
+library(readxl)
+library(cowplot)
+```
+
+## Parameters
+```{r set_params}
+set.seed(20220602)
+
+RDS_IN="data/df_tiger_clean.Rds"
+
+LOC_COLORS=c("ER"="#4B74A6", "TG"="#E4E4CA", "CY"="#949494", "DF"="#CCCCCC")
+LOC_COLORS_DARK=c("ER"="#4B74A6", "TG"="#C9C497", "CY"="#949494", "DF"="#CCCCCC")
+
+MIN_PCON_CY=1.15
+MIN_PCON_ER=1.25
+MIN_PCON_TG=1.30
+
+MIN_PCON_DIFF=0.15
+```
+
+# Data
+## Loading
+```{r load_data, message=FALSE}
+df_tiger <- readRDS(RDS_IN)
+```
+
+# Analysis
+
+## Sanity Checks
+### Compositionality
+First, validate that the partition coefficients for each gene sum to 1.
+
+```{r pco_valid, fig.width=3, fig.height=4}
+df_pcos <- df_tiger %>%
+    mutate(pco_sum=pco_tg+pco_er+pco_cy) %>%
+    select(gene_name, refseq_id, category, pco_sum, pco_tg, pco_er, pco_cy)
+
+ggplot(df_pcos, aes(x=pco_sum)) +
+    geom_histogram(fill='lightgrey', color='black', binwidth=0.005) +
+    geom_histogram(data=filter(df_pcos, map_lgl(pco_sum, all.equal, current=1)), fill='steelblue', color='black', binwidth=0.005) +
+    labs(x="Sum of Partition Coefficients", y="Genes") +
+    scale_y_continuous(expand=c(0,0,0.1,0)) +
+    theme_light()
+```
+
+Seems to be correct!
+
+### Normalizaton
+Normalized coefficients are derived by by dividing by the medians. Let's verify.
+```{r recalc_normed_vals}
+df_pcons <- df_tiger %>%
+    select(gene_name, refseq_id, category, 
+           pco_cy, pco_er, pco_tg, 
+           npco_cy, npco_er, npco_tg) %>%
+    mutate(pcon_cy=pco_cy/median(pco_cy),
+           pcon_er=pco_er/median(pco_er),
+           pcon_tg=pco_tg/median(pco_tg))
+
+df_pcons %$% all.equal(npco_cy, pcon_cy)
+df_pcons %$% all.equal(npco_er, pcon_er)
+df_pcons %$% all.equal(npco_tg, pcon_tg)
+```
+
+Looks like there are some differences. Let's check that these really are uniformly small,
+and not a few large differences.
+
+```{r check_small_errors} 
+df_pcons %$% summary(npco_cy - pcon_cy)
+df_pcons %$% summary(npco_er - pcon_er)
+df_pcons %$% summary(npco_tg - pcon_tg)
+
+df_pcons %>%
+    ggplot() +
+    geom_histogram(aes(x=npco_cy-pcon_cy), binwidth=1e-5, position='stack',
+                   fill=LOC_COLORS["CY"], color='black') +
+    geom_histogram(aes(x=npco_er-pcon_er), binwidth=1e-5, position='stack',
+                   fill=LOC_COLORS["ER"], color='black') +
+    geom_histogram(aes(x=npco_tg-pcon_tg), binwidth=1e-5, position='stack',
+                   fill=LOC_COLORS["TG"], color='black') +
+    scale_y_continuous(expand=c(0,0,0.05,0)) +
+    labs(x="Difference (Reported - Computed)", y="Genes") +
+    theme_light()
+```
+
+They are small, but they are biased. Were the medians rounded prior to dividing?
+
+```{r check_medians}
+df_pcons %$% median(pco_cy)
+df_pcons %$% median(pco_er)
+df_pcons %$% median(pco_tg)
+```
+
+Yes. This is consistent with having rounded the medians to the fourth sigfig prior
+to computing the normalized values. So, we should get exact matching with...
+
+```{r rerecalc_normed_vals}
+df_pcons2 <- df_tiger %>%
+    select(gene_name, refseq_id, category, 
+           pco_cy, pco_er, pco_tg, 
+           npco_cy, npco_er, npco_tg) %>%
+    mutate(pcon_cy=pco_cy/round(median(pco_cy), digits=4),
+           pcon_er=pco_er/round(median(pco_er), digits=4),
+           pcon_tg=pco_tg/round(median(pco_tg), digits=4))
+
+df_pcons2 %$% all.equal(npco_cy, pcon_cy)
+df_pcons2 %$% all.equal(npco_er, pcon_er)
+df_pcons2 %$% all.equal(npco_tg, pcon_tg)
+```
+
+Perfect!
+
+### Consistent Categorization 
+We were told that categorization was based on the normalized partition coefficients.
+We'll see how it matches up on the raw coefficients first, and then check that normalized
+coefficients properly assign the categories.
+```{r cat_valid_raw}
+df_pcos %>%
+    mutate(pco_sum=NULL) %>%
+    pivot_longer(cols=starts_with("pco", ignore.case=FALSE),
+                 names_to="partition", names_prefix="pco_",
+                 values_to="coefficient") %>%
+    group_by(gene_name, refseq_id) %>%
+    slice_max(coefficient) %>%
+    ungroup() %>%
+    mutate(partition=factor(toupper(partition), levels=c("ER", "TG", "CY"))) %>%
+    tbl_summary(by=category, include=partition, 
+                label=c(category="Category", partition="Max Partition (raw)")) %>%
+    modify_header(label ~ "**Categorization**")
+```
+
+Okay, that's a little noisy, but we know that the actual categories were assigned 
+using the normalized coefficients. So, let's look at them...
+
+```{r cat_valid_norm}
+df_tiger %>%
+    pivot_longer(cols=starts_with("npco_"),
+                 names_to="partition", names_prefix="npco_",
+                 values_to="coefficient") %>%
+    group_by(gene_name, refseq_id) %>%
+    slice_max(coefficient) %>%
+    ungroup() %>%
+    mutate(partition=factor(toupper(partition), levels=c("ER", "TG", "CY"))) %>%
+    tbl_summary(by=category, include=partition, 
+                label=c(category="Category", partition="Max Partition (norm.)")) %>%
+    modify_header(label ~ "**Categorization**")
+```
+
+This shows consistency with maximum category.
+
+## Categorization
+Let's look at the categories visualized in ternary plots.
+
+### Raw Coefficients
+The first plot shows a näive 50% cutoff line. That is, any genes outside the central
+triangle have 50% of their FPKMs coming from one subcellular compartment. The second
+plot includes cutoff lines that are chosen to separate the classifications.
+
+```{r plot_cat_raw, fig.width=5, fig.height=5}
+df_tiger %>%
+    ggtern(aes(x=pco_er, y=pco_cy, z=pco_tg, color=category)) +
+    geom_point(size=0.2, alpha=0.4) +
+    geom_Lline(Lintercept=0.50, linetype='dashed') + 
+    geom_Rline(Rintercept=0.50, linetype='dashed') + 
+    geom_Tline(Tintercept=0.50, linetype='dashed') +
+    scale_color_manual(values=LOC_COLORS_DARK) +
+    labs(x="ER", y="CY", z="TG") +
+    guides(color="none") +
+    theme_bw()
+
+df_tiger %>%
+    ggtern(aes(x=pco_er, y=pco_cy, z=pco_tg, color=category)) +
+    geom_point(size=0.2, alpha=0.4) +
+    geom_Lline(Lintercept=0.38, linetype='dashed') + 
+    geom_Rline(Rintercept=0.42, linetype='dashed') + 
+    geom_Tline(Tintercept=0.43, linetype='dashed') +
+    scale_color_manual(values=LOC_COLORS_DARK) +
+    labs(x="ER", y="CY", z="TG") +
+    guides(color="none") +
+    theme_bw()
+
+ggsave("img/pcos_raw_ternary.pdf", width=5, height=5, dpi=300)
+```
+
+There is some non-linearity in there, but one may not notice it if not looking closely.
+This is expected because we assign categories using the normalized coefficients.
+
+### Normalized Coefficients
+Three plots show 50% cutoffs, 40% cutoffs, and empirical (best fit) cutoffs.
+
+```{r plot_cat_norm, fig.width=5, fig.height=5}
+df_tiger %>%
+    ggtern(aes(x=npco_er, y=npco_cy, z=npco_tg, color=category)) +
+    geom_point(size=0.2, alpha=0.4) +
+    geom_Lline(Lintercept=0.5, linetype='dashed') + 
+    geom_Rline(Rintercept=0.5, linetype='dashed') + 
+    geom_Tline(Tintercept=0.5, linetype='dashed') +
+    scale_color_manual(values=LOC_COLORS_DARK) +
+    labs(x="ER", y="CY", z="TG") +
+    guides(color='none') +
+    theme_bw()
+
+df_tiger %>%
+    ggtern(aes(x=npco_er, y=npco_cy, z=npco_tg, color=category)) +
+    geom_point(size=0.2, alpha=0.4) +
+    geom_Lline(Lintercept=0.4, linetype='dashed') + 
+    geom_Rline(Rintercept=0.4, linetype='dashed') + 
+    geom_Tline(Tintercept=0.4, linetype='dashed') +
+    scale_color_manual(values=LOC_COLORS_DARK) +
+    labs(x="ER", y="CY", z="TG") +
+    guides(color='none') +
+    theme_bw()
+
+df_tiger %>%
+    ggtern(aes(x=npco_er, y=npco_cy, z=npco_tg, color=category)) +
+    geom_point(size=0.2, alpha=0.4) +
+    geom_Lline(Lintercept=0.405, linetype='dashed') + 
+    geom_Rline(Rintercept=0.40, linetype='dashed') + 
+    geom_Tline(Tintercept=0.41, linetype='dashed') +
+    scale_color_manual(values=LOC_COLORS_DARK) +
+    labs(x="ER", y="CY", z="TG") +
+    guides(color='none') +
+    theme_bw()
+
+ggsave("img/pcos_norm_ternary.pdf", width=5, height=5, dpi=300)
+```
+
+#### Alternative Dot Sizes
+```{r plot_cat_norm_alts, fig.width=5, fig.height=5}
+df_tiger %>%
+    ggtern(aes(x=npco_er, y=npco_cy, z=npco_tg, color=category)) +
+    geom_point(size=0.4, alpha=0.4) +
+    geom_Lline(Lintercept=0.405, linetype='dashed') + 
+    geom_Rline(Rintercept=0.40, linetype='dashed') + 
+    geom_Tline(Tintercept=0.41, linetype='dashed') +
+    scale_color_manual(values=LOC_COLORS_DARK) +
+    labs(x="ER", y="CY", z="TG") +
+    guides(color='none') +
+    theme_bw()
+
+ggsave("img/pcos_norm_ternary_alt1.pdf", width=5, height=5, dpi=300)
+
+df_tiger %>%
+    ggtern(aes(x=npco_er, y=npco_cy, z=npco_tg, color=category)) +
+    geom_point(size=0.8, alpha=0.6) +
+    geom_Lline(Lintercept=0.405, linetype='dashed') + 
+    geom_Rline(Rintercept=0.40, linetype='dashed') + 
+    geom_Tline(Tintercept=0.41, linetype='dashed') +
+    scale_color_manual(values=LOC_COLORS_DARK) +
+    labs(x="ER", y="CY", z="TG") +
+    guides(color='none') +
+    theme_bw()
+
+ggsave("img/pcos_norm_ternary_alt2.pdf", width=5, height=5, dpi=300)
+```
+
+# Covariate Plots
+Here we plot some of the covariates (e.g., CLIP peak counts) using the ternary plots.
+We both scale the point sizes and the color based on the covariate values. This helps
+to deemphasize all the those genes that have low values in favor of those with high
+values. Overall, I think the individual plots are not so clear to interpret, however, 
+comparing the plots of different covariates seems to make for a nice contrast.
+
+The ridge plots are more for modelling purposes, to explore what type of transformation
+might be best to apply before input the covariate into the regression model.
+
+## TIS11B
+### Ternary Plot
+```{r plot_tis11_tern, fig.width=8, fig.height=6, warning=FALSE}
+df_tiger %>%
+    mutate(pscore_tis11b=2*(sqrt(TIS11B_CLIP) - sqrt(mean(TIS11B_CLIP, na.rm=TRUE)))) %>%
+    arrange(TIS11B_CLIP) %>%
+    ggtern(aes(x=npco_er, y=npco_cy, z=npco_tg, color=TIS11B_CLIP, size=TIS11B_CLIP)) +
+    geom_point(alpha=0.3, pch=16) +
+    geom_Lline(Lintercept=0.4, linetype='dashed') + 
+    geom_Rline(Rintercept=0.4, linetype='dashed') + 
+    geom_Tline(Tintercept=0.4, linetype='dashed') +
+    scale_color_viridis_c(option="B", trans="sqrt") +
+    scale_size_area() +
+    labs(x="ER", y="CY", z="TG") +
+    guides(size='none') +
+    theme_light()
+
+ggsave("img/tis11b_ternary.pdf", width=8, height=6, dpi=300)
+```
+
+This is clearly non-cytoplasmic, with leaning toward the TG side.
+
+### Ridge Plots
+```{r plot_tis11_ridge, warning=FALSE, message=FALSE}
+RBP_CLIP <- "TIS11B_CLIP"
+
+df_tiger %>%
+    ggplot(aes(x=.data[[RBP_CLIP]], y=category, fill=category)) +
+    geom_density_ridges(alpha=0.95) +
+    scale_fill_manual(values=LOC_COLORS) +
+    labs(x="Raw Counts") +
+    theme_bw()
+
+df_tiger %>%
+    mutate(pscore=2*(sqrt(.[[RBP_CLIP]]) - sqrt(mean(.[[RBP_CLIP]], na.rm=TRUE)))) %>%
+    ggplot(aes(x=pscore, y=category, fill=category)) +
+    geom_density_ridges(alpha=0.95) +
+    scale_fill_manual(values=LOC_COLORS) +
+    labs(x="Variance Stabilizing Transform") +
+    theme_bw()
+
+df_tiger %>%
+    mutate(zscore=scale(.[[RBP_CLIP]])) %>%
+    ggplot(aes(x=zscore, y=category, fill=category)) +
+    geom_density_ridges(alpha=0.95) +
+    scale_fill_manual(values=LOC_COLORS) +
+    labs(x="Z-Score") +
+    theme_bw()
+```
+
+## TIA1_L1
+### Ternary Plot
+```{r plot_tia1l1_tern, fig.width=8, fig.height=6, warning=FALSE, message=FALSE}
+df_tiger %>%
+    mutate(pscore_tis11b=2*(sqrt(TIA1_L1_CLIP) - sqrt(mean(TIA1_L1_CLIP, na.rm=TRUE)))) %>%
+    arrange(TIA1_L1_CLIP) %>%
+    ggtern(aes(x=npco_er, y=npco_cy, z=npco_tg, color=TIA1_L1_CLIP, size=TIA1_L1_CLIP)) +
+    geom_point(alpha=0.3, pch=16) +
+    geom_Lline(Lintercept=0.4, linetype='dashed') + 
+    geom_Rline(Rintercept=0.4, linetype='dashed') + 
+    geom_Tline(Tintercept=0.4, linetype='dashed') +
+    scale_color_viridis_c(option="B", trans="sqrt") +
+    scale_size_area() +
+    labs(x="ER", y="CY", z="TG") +
+    guides(size='none') +
+    theme_light()
+
+ggsave("img/tial1_ternary.pdf", width=8, height=6, dpi=300)
+```
+
+### Ridge Plot
+```{r plot_tial1_ridge, warning=FALSE, message=FALSE}
+RBP_CLIP <- "TIA1_L1_CLIP"
+
+df_tiger %>%
+    ggplot(aes(x=.data[[RBP_CLIP]], y=category, fill=category)) +
+    geom_density_ridges(alpha=0.95) +
+    scale_fill_manual(values=LOC_COLORS) +
+    labs(x="Raw Counts") +
+    theme_bw()
+
+df_tiger %>%
+    mutate(pscore=2*(sqrt(.[[RBP_CLIP]]) - sqrt(mean(.[[RBP_CLIP]], na.rm=TRUE)))) %>%
+    ggplot(aes(x=pscore, y=category, fill=category)) +
+    geom_density_ridges(alpha=0.95) +
+    scale_fill_manual(values=LOC_COLORS) +
+    labs(x="Variance Stabilizing Transform") +
+    theme_bw()
+
+df_tiger %>%
+    mutate(zscore=scale(.[[RBP_CLIP]])) %>%
+    ggplot(aes(x=zscore, y=category, fill=category)) +
+    geom_density_ridges(alpha=0.95) +
+    scale_fill_manual(values=LOC_COLORS) +
+    labs(x="Z-Score") +
+    theme_bw()
+```
+
+## PUM2 CLIP
+### Ternary Plot
+```{r plot_pum2_tern, fig.width=8, fig.height=6, warning=FALSE, message=FALSE}
+df_tiger %>%
+    mutate(pscore_tis11b=2*(sqrt(PUM2_CLIP) - sqrt(mean(PUM2_CLIP, na.rm=TRUE)))) %>%
+    arrange(PUM2_CLIP) %>%
+    ggtern(aes(x=npco_er, y=npco_cy, z=npco_tg, color=PUM2_CLIP, size=PUM2_CLIP)) +
+    geom_point(alpha=0.3, pch=16) +
+    geom_Lline(Lintercept=0.4, linetype='dashed') + 
+    geom_Rline(Rintercept=0.4, linetype='dashed') + 
+    geom_Tline(Tintercept=0.4, linetype='dashed') +
+    scale_color_viridis_c(option="B", trans="sqrt") +
+    scale_size_area() +
+    labs(x="ER", y="CY", z="TG") +
+    guides(size='none') +
+    theme_light()
+
+ggsave("img/pum2_clip_ternary.pdf", width=8, height=6, dpi=300)
+```
+
+
+### Ridge Plot
+```{r plot_pum2_ridge, warning=FALSE, message=FALSE}
+RBP_CLIP <- "PUM2_CLIP"
+
+df_tiger %>%
+    ggplot(aes(x=.data[[RBP_CLIP]], y=category, fill=category)) +
+    geom_density_ridges(alpha=0.95) +
+    scale_fill_manual(values=LOC_COLORS) +
+    labs(x="Raw Counts") +
+    theme_bw()
+
+df_tiger %>%
+    mutate(pscore=2*(sqrt(.[[RBP_CLIP]]) - sqrt(mean(.[[RBP_CLIP]], na.rm=TRUE)))) %>%
+    ggplot(aes(x=pscore, y=category, fill=category)) +
+    geom_density_ridges(alpha=0.95) +
+    scale_fill_manual(values=LOC_COLORS) +
+    labs(x="Variance Stabilizing Transform") +
+    theme_bw()
+
+df_tiger %>%
+    mutate(zscore=scale(.[[RBP_CLIP]])) %>%
+    ggplot(aes(x=zscore, y=category, fill=category)) +
+    geom_density_ridges(alpha=0.95) +
+    scale_fill_manual(values=LOC_COLORS) +
+    labs(x="Z-Score") +
+    theme_bw()
+```
+
+## Pumilio num
+### Ternary Plot
+```{r plot_pum_num_tern, fig.width=8, fig.height=6, warning=FALSE, message=FALSE}
+df_tiger %>%
+    mutate(pscore=2*(sqrt(Pumilio_3UTR_num) - sqrt(mean(Pumilio_3UTR_num, na.rm=TRUE)))) %>%
+    arrange(Pumilio_3UTR_num) %>%
+    ggtern(aes(x=npco_er, y=npco_cy, z=npco_tg, 
+               color=Pumilio_3UTR_num, 
+               size=Pumilio_3UTR_num)) +
+    geom_point(alpha=0.3, pch=16) +
+    geom_Lline(Lintercept=0.4, linetype='dashed') + 
+    geom_Rline(Rintercept=0.4, linetype='dashed') + 
+    geom_Tline(Tintercept=0.4, linetype='dashed') +
+    scale_color_viridis_c(option="B", trans="sqrt") +
+    scale_size_area() +
+    labs(x="ER", y="CY", z="TG") +
+    guides(size='none') +
+    theme_light()
+
+ggsave("img/pumilio_3utr_ternary.pdf", width=8, height=6, dpi=300)
+```
+
+### Density
+```{r plot_pum_density_tern, fig.width=8, fig.height=6, warning=FALSE, message=FALSE}
+df_tiger %>%
+    mutate(pum_density=1000*Pumilio_3UTR_num/Anno_3UTR_length) %>%
+    arrange(pum_density) %>%
+    ggtern(aes(x=npco_er, y=npco_cy, z=npco_tg, 
+               color=pum_density, 
+               size=pum_density)) +
+    geom_point(alpha=0.3, pch=16) +
+    geom_Lline(Lintercept=0.4, linetype='dashed') + 
+    geom_Rline(Rintercept=0.4, linetype='dashed') + 
+    geom_Tline(Tintercept=0.4, linetype='dashed') +
+    scale_color_viridis_c(option="B", trans="sqrt") +
+    scale_size_area() +
+    labs(x="ER", y="CY", z="TG") +
+    guides(size='none') +
+    theme_light()
+
+ggsave("img/pumilio_density_ternary.pdf", width=8, height=6, dpi=300)
+```
+
+### Ridge Plot
+```{r plot_pum_num_ridge, warning=FALSE, message=FALSE}
+RBP_CLIP <- "Pumilio_3UTR_num"
+
+df_tiger %>%
+    ggplot(aes(x=.data[[RBP_CLIP]], y=category, fill=category)) +
+    geom_density_ridges(alpha=0.95) +
+    scale_fill_manual(values=LOC_COLORS) +
+    labs(x="Raw Counts") +
+    theme_bw()
+
+df_tiger %>%
+    mutate(pscore=2*(sqrt(.[[RBP_CLIP]]) - sqrt(mean(.[[RBP_CLIP]], na.rm=TRUE)))) %>%
+    ggplot(aes(x=pscore, y=category, fill=category)) +
+    geom_density_ridges(alpha=0.95) +
+    scale_fill_manual(values=LOC_COLORS) +
+    labs(x="Variance Stabilizing Transform") +
+    theme_bw()
+
+df_tiger %>%
+    mutate(zscore=scale(.[[RBP_CLIP]])) %>%
+    ggplot(aes(x=zscore, y=category, fill=category)) +
+    geom_density_ridges(alpha=0.95) +
+    scale_fill_manual(values=LOC_COLORS) +
+    labs(x="Z-Score") +
+    theme_bw()
+```
+
+# Combination Plots
+## TIS11B and TIAL1
+```{r plot_tis11_tial1, fig.width=8, fig.height=6, warning=FALSE}
+df_tiger %>%
+    mutate(pscore_tis11b=2*(sqrt(TIS11B_CLIP) - sqrt(mean(TIS11B_CLIP, na.rm=TRUE))),
+           pscore_tial1=2*(sqrt(TIA1_L1_CLIP) - sqrt(mean(TIA1_L1_CLIP, na.rm=TRUE)))) %>%
+    arrange(pmax(TIS11B_CLIP,TIA1_L1_CLIP)) %>%
+    ggtern(aes(x=npco_er, y=npco_cy, z=npco_tg)) +
+    geom_point(aes(color=TIS11B_CLIP, size=TIS11B_CLIP+TIA1_L1_CLIP), 
+               alpha=0.60, pch=16) +
+    scale_color_gradient(low="#000000", high="#FF0000", trans="log1p") +
+    geom_point(aes(fill=TIA1_L1_CLIP, size=TIS11B_CLIP+TIA1_L1_CLIP), 
+               alpha=0.12, pch=21) +
+    scale_fill_gradient(low="#000000", high="#00FF00", trans="log1p") +
+    geom_Lline(Lintercept=0.4, linetype='dashed') + 
+    geom_Rline(Rintercept=0.4, linetype='dashed') + 
+    geom_Tline(Tintercept=0.4, linetype='dashed') +
+    scale_size_area() +
+    labs(x="ER", y="CY", z="TG") +
+    guides(size='none') +
+    theme_dark() +
+    theme(panel.background=element_rect(fill="#000000"))
+
+ggsave("img/tis11b_tial1_ternary.pdf", width=10, height=8, dpi=300)
+```
+
+
+## TIS11B and HuR
+```{r plot_tis11_hur, fig.width=8, fig.height=6, warning=FALSE}
+df_tiger %>%
+    mutate(pscore_tis11b=2*(sqrt(TIS11B_CLIP) - sqrt(mean(TIS11B_CLIP, na.rm=TRUE))),
+           pscore_hur=2*(sqrt(Muk_HuR_CLIP) - sqrt(mean(Muk_HuR_CLIP, na.rm=TRUE)))) %>%
+    arrange(pmax(TIS11B_CLIP,Muk_HuR_CLIP)) %>%
+    ggtern(aes(x=npco_er, y=npco_cy, z=npco_tg)) +
+    geom_point(aes(color=TIS11B_CLIP, size=TIS11B_CLIP+Muk_HuR_CLIP), 
+               alpha=0.60, pch=16) +
+    scale_color_gradient(low="#000000", high="#FF0000", trans="log1p") +
+    geom_point(aes(fill=Muk_HuR_CLIP, size=TIS11B_CLIP+Muk_HuR_CLIP), 
+               alpha=0.15, pch=21) +
+    scale_fill_gradient(low="#000000", high="#00FF00", trans="log1p") +
+    geom_Lline(Lintercept=0.4, linetype='dashed') + 
+    geom_Rline(Rintercept=0.4, linetype='dashed') + 
+    geom_Tline(Tintercept=0.4, linetype='dashed') +
+    scale_size_area() +
+    labs(x="ER", y="CY", z="TG") +
+    guides(size='none') +
+    theme_dark() +
+    theme(panel.background=element_rect(fill="#000000"))
+
+ggsave("img/tis11b_hur_ternary.pdf", width=10, height=8, dpi=300)
+```
+
+
+## TIS11B and Pum1/2
+```{r plot_tis11_pum12, fig.width=8, fig.height=6, warning=FALSE}
+df_tiger %>%
+    mutate(pscore_tis11b=2*(sqrt(TIS11B_CLIP) - sqrt(mean(TIS11B_CLIP, na.rm=TRUE))),
+           pscore_pum12=2*(sqrt(PUM_RIP12) - sqrt(mean(PUM_RIP12, na.rm=TRUE)))) %>%
+    arrange(pmax(TIS11B_CLIP,PUM_RIP12)) %>%
+    ggtern(aes(x=npco_er, y=npco_cy, z=npco_tg)) +
+    geom_point(aes(color=TIS11B_CLIP, size=TIS11B_CLIP+PUM_RIP12), 
+               alpha=0.60, pch=16) +
+    scale_color_gradient(low="#000000", high="#FF0000", trans="log1p") +
+    geom_point(aes(fill=PUM_RIP12, size=TIS11B_CLIP+PUM_RIP12), 
+               alpha=0.15, pch=21) +
+    scale_fill_gradient(low="#000000", high="#00FF00", trans="identity") +
+    geom_Lline(Lintercept=0.4, linetype='dashed') + 
+    geom_Rline(Rintercept=0.4, linetype='dashed') + 
+    geom_Tline(Tintercept=0.4, linetype='dashed') +
+    scale_size_area() +
+    labs(x="ER", y="CY", z="TG") +
+    guides(size='none') +
+    theme_dark() +
+    theme(panel.background=element_rect(fill="#000000"))
+
+ggsave("img/tis11b_pum12_ternary.pdf", width=10, height=8, dpi=300)
+```
+
+# Conclusion
+
+Data looks very promising to predict partition coefficients from covariate values.
+Ridge peaks indicate the variance stabilizing transform is very effective. We may
+want to combine the VST with a z-score to create model coefficients that are directly 
+comparable.
+
+---
+
+# Runtime Details
+## Session Info
+```{r sesh_info, echo=FALSE}
+sessionInfo()
+```
+
+## Conda Environment
+```{bash comment="", echo=FALSE}
+if ! command -v conda &> /dev/null
+then
+  echo "Conda not detected."
+elif [ -z "${CONDA_PREFIX}" ]
+then
+  echo "No active Conda environment."
+else
+  echo "## Conda Environment YAML"
+  conda env export
+fi
+```

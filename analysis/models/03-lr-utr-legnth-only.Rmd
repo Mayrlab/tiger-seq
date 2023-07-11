@@ -1,0 +1,163 @@
+---
+title: "Logistic Regression Classification"
+author: "Mervin M Fansler"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: 
+  html_document: 
+    code_folding: show
+    toc: true
+    toc_float: true
+---
+
+# Purpose
+
+Here we attempt using covariates to classify genes into localization groups.
+
+# Initialization
+
+## Libraries
+```{r libs, message=FALSE, warning=FALSE}
+library(magrittr)
+library(tidyverse)
+library(ggtern)
+library(ggrepel)
+library(broom)
+library(caret)
+library(nnet)
+library(readxl)
+```
+
+## Parameters
+```{r set_params}
+set.seed(20220607)
+N_STEPS=500
+
+RDS_IN="data/df_tiger_clean.Rds"
+
+LOC_COLORS=c("ER"="#4B74A6", "TG"="#E4E4CA", "CY"="#949494", "DF"="#CCCCCC")
+
+COVARIATES=c(
+    # "Leb_HuR_CLIP", 
+    #"Muk_HuR_CLIP", 
+    # "CPE_annoUTR", 
+    # "CCCCCC_3UTR_num",
+    #"Pumilio_3UTR_num", 
+    # "PUM2_CLIP", 
+    # "KHSRP_CLIP", 
+    # "CPSF6_CLIP", 
+    #"TIS11B_CLIP", 
+    #"TIA1_L1_CLIP", 
+    # "PTBP1_CLIP", 
+    # "HNRNPC_CLIP",
+    # "CELF2_CLIP", 
+    # "HNRNPM_CLIP", 
+    #"HNRNPD_CLIP", 
+    # "Zhang_RBM15_RIP",
+    # "LIN28B_CLIP", 
+    #"IGF2BP3_CLIP", 
+    # "TARDBP_CLIP", 
+    # "TAF15_CLIP",
+    #"FUS_CLIP", 
+    #"METAP2_CLIP", 
+    # "DDX6_CLIP", 
+    # "EIF4A3_CLIP",
+    #"LARP4B_exon_CLIP", 
+    # "hnRNPK_CLIP", 
+    # "GEMIN5_CLIP", 
+    # "CSTF2T_CLIP",
+    # "DDX24_CLIP", 
+    #"PCBP2_CLIP", 
+    #"PUM_RIP12",
+    "Anno_3UTR_length")
+```
+
+# Data
+## Loading
+```{r load_data, message=FALSE}
+df_tiger <- readRDS(RDS_IN)
+```
+
+## Preprocessing
+### Subset
+```{r prepare_data}
+df_data <- select(df_tiger, category, all_of(COVARIATES))
+```
+
+### Imputing
+```{r data_impute}
+df_imputed <- df_data %>%
+    mutate_at("Anno_3UTR_length", ~ ifelse(is.na(.x), median(.x, na.rm=TRUE), .x)) %>%
+    mutate_at(-1, ~ ifelse(is.na(.x), 0, .x))
+```
+
+### Data Normalizing
+```{r data_normalize}
+df_scaled <- df_imputed %>%
+    mutate_at(-1, ~ scale(sqrt(.x))[,1])
+```
+
+### Splitting
+```{r data_split}
+idx_train <- createDataPartition(df_scaled$category, p=0.8, list=FALSE)
+
+df_train <- df_scaled[idx_train,]
+df_test  <- df_scaled[-idx_train,]
+
+full_join(count(df_train, category, name="n_train"),
+          count(df_test, category, name="n_test"),
+          by="category") %>%
+    knitr::kable()
+```
+
+# Analysis
+## Logistic Regression Model
+### Fit
+```{r fit_model}
+model <- multinom(category ~ .*., data=df_train, maxit=1000, MaxNWts=10000)
+AIC(model)
+tidy(model) %>% 
+    arrange(p.value) %>%
+    knitr::kable()
+```
+
+### Model Accuracy
+```{r prediction_accuracy}
+mean(predict(model, df_test) == df_test$category)
+```
+
+### Coefficients
+#### All
+```{r plot_coefficients, fig.width=6, fig.height=4}
+tidy(model) %>%
+    mutate(term=fct_reorder(term, abs(estimate), max)) %>%
+    filter(term != "(Intercept)") %>% 
+    ggplot(aes(y=term, x=estimate, fill=y.level)) +
+    geom_vline(xintercept=0) +
+    geom_bar(stat='identity', position='dodge', color='black', size=0.1, width=0.9) +
+    scale_fill_manual(values=LOC_COLORS) +
+    labs(x="Coefficient", y=NULL, fill="Category") +
+    theme_light()
+```
+
+
+---
+
+# Runtime Details
+## Session Info
+```{r sesh_info, echo=FALSE}
+sessionInfo()
+```
+
+## Conda Environment
+```{bash comment="", echo=FALSE}
+if ! command -v conda &> /dev/null
+then
+  echo "Conda not detected."
+elif [ -z "${CONDA_PREFIX}" ]
+then
+  echo "No active Conda environment."
+else
+  echo "## Conda Environment YAML"
+  conda env export
+fi
+```

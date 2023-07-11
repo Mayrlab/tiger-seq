@@ -1,0 +1,159 @@
+---
+title: "Preprocess Tables"
+author: "Mervin M Fansler"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: 
+  html_document: 
+    code_folding: show
+    toc: true
+    toc_float: true
+---
+
+# Purpose
+
+Here we combine the tables to a single input to be used throughout downstream analysis.
+
+# Initialization
+
+## Libraries
+```{r libs, message=FALSE, warning=FALSE}
+library(magrittr)
+library(tidyverse)
+library(readxl)
+library(writexl)
+```
+
+## Parameters
+```{r set_params}
+CSV_OUT="data/df_tiger_clean.csv"
+RDS_OUT="data/df_tiger_clean.Rds"
+
+COVARIATES=c(
+    "Leb_HuR_CLIP", 
+    "Muk_HuR_CLIP", 
+    "CPE_annoUTR", 
+    "CCCCCC_3UTR_num",
+    "Pumilio_3UTR_num", 
+    "PUM2_CLIP", 
+    "KHSRP_CLIP", 
+    "CPSF6_CLIP", 
+    "TIS11B_CLIP", 
+    "TIA1_L1_CLIP", 
+    "PTBP1_CLIP", 
+    "HNRNPC_CLIP",
+    "CELF2_CLIP", 
+    "HNRNPM_CLIP", 
+    "HNRNPD_CLIP", 
+    "Zhang_RBM15_RIP",
+    "LIN28B_CLIP", 
+    "IGF2BP3_CLIP", 
+    "TARDBP_CLIP", 
+    "TAF15_CLIP",
+    "FUS_CLIP", 
+    "METAP2_CLIP", 
+    "DDX6_CLIP", 
+    "EIF4A3_CLIP",
+    "LARP4B_exon_CLIP", 
+    "hnRNPK_CLIP", 
+    "GEMIN5_CLIP", 
+    "CSTF2T_CLIP",
+    "DDX24_CLIP", 
+    "PCBP2_CLIP", 
+    "PUM_RIP12",
+    "Anno_3UTR_length")
+```
+
+
+# Data
+## Loading
+```{r load_data, message=FALSE}
+df_tiger <- read_xls("data/TIS_ER_CLIP.xls")
+
+df_pcos <- read_xls("data/TGER class V60 061022.xls", na='.') %>%
+    dplyr::rename(classification=VAR00060,
+                  is_expressed=VAR00571,
+                  protein_class=VAR00661sec,
+                  pco_tg=Pco_TGnot,
+                  pco_er=Pco_ERnot,
+                  pco_cy=Pco_CYnot,
+                  npco_tg=nPco_TGnot,
+                  npco_er=nPco_ERnot,
+                  npco_cy=nPco_CYnot)
+
+all(COVARIATES %in% colnames(df_tiger))
+```
+
+## Preprocessing
+### Subset
+```{r prepare_data}
+## use minimal expression and limit to non-transmembrane proteins
+df_pcos_clean <- df_pcos %>%
+    filter(is_expressed == 1, 
+           protein_class == 3) %>%
+    filter(!is.na(classification)) %>%
+    mutate(category=case_when(
+        classification == 5 ~ "DF",
+        classification == 4 ~ "CY",
+        classification == 3 ~ "ER",
+        classification == 1 ~ "TG"
+    ) %>% factor(levels=c("DF", "ER", "TG", "CY"))) %>%
+    select(Gene_name, Refseq_id, category, 
+           starts_with("pco"), starts_with("npco"))
+
+df_tiger_clean <- df_tiger %>%
+    select(!starts_with("Pco")) %>%
+    left_join(x=df_pcos_clean, by=c("Gene_name", "Refseq_id")) %>%
+    rename(gene_name=Gene_name, refseq_id=Refseq_id) %>%
+    select(gene_name, refseq_id, category, 
+           starts_with("pco"), starts_with("npco"),
+           everything())
+
+df_data <- select(df_tiger_clean, category, all_of(COVARIATES))
+```
+
+### Data Checking
+```{r check_data}
+df_data %>%
+    count(category) %>%
+    knitr::kable()
+
+df_data %>% 
+    summarize_at(-1, list(nna= ~sum(is.na(.x)),
+                          nzero= ~sum(.x == 0, na.rm=TRUE),
+                          min= ~min(.x, na.rm=TRUE),
+                          mean= ~mean(.x, na.rm=TRUE), 
+                          median= ~median(.x, na.rm=TRUE),
+                          max= ~max(.x, na.rm=TRUE))) %>%
+    pivot_longer(everything(), names_pattern="^(.*)_([^_]+)$", 
+                 names_to=c("covariate", "stat"), values_to="value") %>%
+    pivot_wider(id_cols="covariate", names_from=stat, values_from=value) %>%
+    knitr::kable()
+```
+
+# Export Clean Table
+```{r export}
+saveRDS(df_tiger_clean, RDS_OUT)
+write_csv(df_tiger_clean, CSV_OUT)
+```
+
+---
+
+# Runtime Details
+## Session Info
+```{r sesh_info, echo=FALSE}
+sessionInfo()
+```
+
+## Conda Environment
+```{bash comment="", echo=FALSE}
+if ! command -v conda &> /dev/null
+then
+  echo "Conda not detected."
+elif [ -z "${CONDA_PREFIX}" ]
+then
+  echo "No active Conda environment."
+else
+  echo "## Conda Environment YAML"
+  conda env export
+fi
+```
