@@ -1,0 +1,26 @@
+name: brms_r41
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - r-brms
+  - r-tidyverse
+  - r-ggtern
+  - r-ggridges
+  - r-gtsummary
+  - r-cowplot
+  - r-broom
+  - r-caret
+  - r-nnet
+  - r-readxl
+  - r-ggrepel
+  - r-base=4.1
+  - merv::r-mervdown
+  - ca-certificates
+  - openssl
+  - r-bh
+  - r-dirichletreg
+  - r-writexl
+  - r-randomforest
+prefix: /Users/mfansler/miniconda3/envs/brms_r41
