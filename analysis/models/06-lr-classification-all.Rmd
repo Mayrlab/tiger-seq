@@ -108,6 +108,7 @@ count(df_scaled, category) %>%
 ### Fit
 ```{r fit_model}
 model <- multinom(category ~ ., data=df_scaled, maxit=1000)
+deviance(model)
 AIC(model)
 tidy(model) %>% 
     arrange(p.value) %>%
@@ -122,6 +123,13 @@ tidy(model) %>%
     write_xlsx(outfile)
 ```
 
+### Pseudo-R-squared
+```{r pseudo-r2}
+model_null <- multinom(category ~ 1, data=df_scaled, maxit=1000)
+sprintf("Residual Deviance = %0.4f", deviance(model))
+sprintf("Null Residual Deviance = %0.4f", deviance(model_null))
+sprintf("Pseudo-R^2 = %0.4f", 1 - deviance(model)/deviance(model_null))
+```
 
 ### Model Accuracy
 ```{r prediction_accuracy}

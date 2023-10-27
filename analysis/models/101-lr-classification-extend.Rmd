@@ -1,0 +1,382 @@
+---
+title: "Logistic Regression Classification - Extended"
+author: "Mervin M Fansler"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: 
+  html_document: 
+    code_folding: show
+    toc: true
+    toc_float: true
+---
+
+# Purpose
+
+Here we attempt using covariates to classify genes into localization groups.
+
+# Initialization
+
+## Libraries
+```{r libs, message=FALSE, warning=FALSE}
+library(magrittr)
+library(tidyverse)
+library(ggtern)
+library(broom)
+library(caret)
+library(nnet)
+library(readxl)
+library(writexl)
+```
+
+## Parameters
+```{r set_params}
+set.seed(20220607)
+N_STEPS=500
+
+RDS_IN="data/df_tiger_extend.Rds"
+
+LOC_COLORS=c("ER"="#4B74A6", "TG"="#E4E4CA", "CY"="#949494", "DF"="#CCCCCC")
+LOC_COLORS_DARK=c("ER"="#4B74A6", "TG"="#C9C497", "CY"="#949494", "DF"="#CCCCCC")
+
+COVARIATES=c(
+    "Leb_HuR_CLIP", 
+    "Muk_HuR_CLIP", 
+    "CPE_annoUTR", 
+    "CCCCCC_3UTR_num",
+    "Pumilio_3UTR_num", 
+    "PUM2_CLIP", 
+    "KHSRP_CLIP", 
+    "CPSF6_CLIP", 
+    "TIS11B_CLIP", 
+    "TIA1_L1_CLIP", 
+    "PTBP1_CLIP", 
+    "HNRNPC_CLIP",
+    "CELF2_CLIP", 
+    "HNRNPM_CLIP", 
+    "HNRNPD_CLIP", 
+    "Zhang_RBM15_RIP",
+    "LIN28B_CLIP", 
+    "IGF2BP3_CLIP", 
+    "TARDBP_CLIP", 
+    "TAF15_CLIP",
+    "FUS_CLIP", 
+    "METAP2_CLIP", 
+    "DDX6_CLIP", 
+    "EIF4A3_CLIP",
+    "LARP4B_exon_CLIP", 
+    "hnRNPK_CLIP", 
+    "GEMIN5_CLIP", 
+    "CSTF2T_CLIP",
+    "DDX24_CLIP", 
+    "PCBP2_CLIP", 
+    "PUM_RIP12",
+    "Anno_3UTR_length",
+    "mane_mRNA_length",
+    "mane_mean_cds_exon_length_all")
+```
+
+# Data
+## Loading
+```{r load_data, message=FALSE}
+df_tiger <- readRDS(RDS_IN)
+```
+
+## Preprocessing
+### Subset
+```{r prepare_data}
+df_data <- select(df_tiger, category, all_of(COVARIATES))
+```
+
+### Imputing
+```{r data_impute}
+df_imputed <- df_data %>%
+    mutate_at(c("Anno_3UTR_length", "mane_mRNA_length", "mane_mean_cds_exon_length_all"), 
+              ~ ifelse(is.na(.x), median(.x, na.rm=TRUE), .x)) %>%
+    mutate_at(-1, ~ ifelse(is.na(.x), 0, .x))
+```
+
+### Data Normalizing
+```{r data_normalize}
+df_scaled <- mutate_at(df_imputed, -1, ~ scale(sqrt(.x))[,1])
+```
+
+### Splitting
+```{r data_split}
+idx_train <- createDataPartition(df_scaled$category, p=0.8, list=FALSE)
+
+df_train <- df_scaled[idx_train,]
+df_test  <- df_scaled[-idx_train,]
+
+full_join(count(df_train, category, name="n_train"),
+          count(df_test, category, name="n_test"),
+          by="category") %>%
+    knitr::kable()
+```
+
+# Analysis
+## Logistic Regression Model
+### Fit
+```{r fit_model}
+model <- multinom(category ~ ., data=df_train, maxit=1000)
+AIC(model)
+tidy(model) %>% 
+    arrange(p.value) %>%
+    knitr::kable()
+```
+
+### Export
+```{r export_fit} 
+outfile <- sprintf("tbl/%s-model-fit-lr-extend.xlsx", format(Sys.time(), '%Y%m%d'))
+tidy(model) %>%
+    arrange(p.value) %>%
+    write_xlsx(outfile)
+```
+
+
+### Model Accuracy
+```{r prediction_accuracy}
+mean(predict(model, df_test) == df_test$category)
+```
+
+### Coefficients
+```{r plot_coefficients, fig.width=6, fig.height=8}
+coefficients(model) %>%
+    as_tibble(rownames="category") %>%
+    select(-c("(Intercept)")) %>%
+    pivot_longer(-c("category"), names_to="variable", values_to="value") %>%
+    mutate(variable=fct_reorder(variable, abs(value), max)) %>%
+    ggplot(aes(y=variable, x=value, fill=category)) +
+    geom_vline(xintercept=0) +
+    geom_bar(stat='identity', position='dodge', color='black', size=0.1, width=0.9) +
+    scale_fill_manual(values=LOC_COLORS) +
+    labs(x="Coefficient", y=NULL, fill="Category") +
+    theme_light()
+
+ggsave("img/extend/lr-coefs-all.pdf", width=6, height=8, dpi=300)
+```
+
+### Coefficient Pairs
+#### TIAL1, TIS11B
+```{r coefs_tia_tis, fig.width=5, fig.height=4}
+df_train %>% 
+    summarize(across(everything(), mean)) %>% 
+    slice(rep(1, N_STEPS)) %>%
+    mutate(TIA1_L1_CLIP=seq(-10, 10, length.out=N_STEPS)) %>%
+    slice(rep(1:N_STEPS, times=N_STEPS)) %>%
+    mutate(TIS11B_CLIP=rep(seq(-10,10, length.out=N_STEPS), each=N_STEPS)) %>%
+    mutate(category=predict(object=model, .)) %>%
+    ggplot(aes(x=TIA1_L1_CLIP, y=TIS11B_CLIP, fill=category)) +
+    geom_tile(linejoin="bevel") +
+    scale_fill_manual(values=LOC_COLORS) +
+    theme_bw()
+
+ggsave("img/extend/lr-pairs-tial1-tis11b.pdf", width=5, height=4, dpi=300)
+```
+
+#### Pumilio Num, TIS11B
+```{r coefs_pum_tis, fig.width=5, fig.height=4}
+df_train %>% 
+    summarize(across(everything(), mean)) %>% 
+    slice(rep(1, N_STEPS)) %>%
+    mutate(Pumilio_3UTR_num=seq(-10, 10, length.out=N_STEPS)) %>%
+    slice(rep(1:N_STEPS, times=N_STEPS)) %>%
+    mutate(TIS11B_CLIP=rep(seq(-10,10, length.out=N_STEPS), each=N_STEPS)) %>%
+    mutate(category=predict(object=model, .)) %>%
+    ggplot(aes(x=Pumilio_3UTR_num, y=TIS11B_CLIP, fill=category)) +
+    geom_tile(linejoin="bevel") +
+    scale_fill_manual(values=LOC_COLORS) +
+    theme_bw()
+
+ggsave("img/extend/lr-pairs-pumnum-tis11b.pdf", width=5, height=4, dpi=300)
+```
+
+#### Pum1/2 RIP, TIS11B
+```{r coefs_pum12_tis, fig.width=5, fig.height=4}
+df_train %>% 
+    summarize(across(everything(), mean)) %>% 
+    slice(rep(1, N_STEPS)) %>%
+    mutate(PUM_RIP12=seq(-10, 10, length.out=N_STEPS)) %>%
+    slice(rep(1:N_STEPS, times=N_STEPS)) %>%
+    mutate(TIS11B_CLIP=rep(seq(-10,10, length.out=N_STEPS), each=N_STEPS)) %>%
+    mutate(category=predict(object=model, .)) %>%
+    ggplot(aes(x=PUM_RIP12, y=TIS11B_CLIP, fill=category)) +
+    geom_tile(linejoin="bevel") +
+    scale_fill_manual(values=LOC_COLORS) +
+    theme_bw()
+
+ggsave("img/extend/lr-pairs-pum12rip-tis11b.pdf", width=5, height=4, dpi=300)
+```
+
+#### Pum1/2 RIP, TIAL1
+```{r coefs_pum12_tial1, fig.width=5, fig.height=4}
+df_train %>% 
+    summarize(across(everything(), mean)) %>% 
+    slice(rep(1, N_STEPS)) %>%
+    mutate(PUM_RIP12=seq(-10, 10, length.out=N_STEPS)) %>%
+    slice(rep(1:N_STEPS, times=N_STEPS)) %>%
+    mutate(TIA1_L1_CLIP=rep(seq(-10,10, length.out=N_STEPS), each=N_STEPS)) %>%
+    mutate(category=predict(object=model, .)) %>%
+    ggplot(aes(x=PUM_RIP12, y=TIA1_L1_CLIP, fill=category)) +
+    geom_tile(linejoin="bevel") +
+    scale_fill_manual(values=LOC_COLORS) +
+    theme_bw()
+
+ggsave("img/extend/lr-pairs-pum12rip-tial1.pdf", width=5, height=4, dpi=300)
+```
+
+#### Pumilio Num, TIAL1
+```{r coefs_pum_tia, fig.width=5, fig.height=4}
+df_train %>% 
+    summarize(across(everything(), mean)) %>% 
+    slice(rep(1, N_STEPS)) %>%
+    mutate(Pumilio_3UTR_num=seq(-10, 10, length.out=N_STEPS)) %>%
+    slice(rep(1:N_STEPS, times=N_STEPS)) %>%
+    mutate(TIA1_L1_CLIP=rep(seq(-10,10, length.out=N_STEPS), each=N_STEPS)) %>%
+    mutate(category=predict(object=model, .)) %>%
+    ggplot(aes(x=Pumilio_3UTR_num, y=TIA1_L1_CLIP, fill=category)) +
+    geom_tile(linejoin="bevel") +
+    scale_fill_manual(values=LOC_COLORS) +
+    theme_bw()
+
+ggsave("img/extend/lr-pairs-pumnum-tial1.pdf", width=5, height=4, dpi=300)
+```
+
+#### TIS11B, LARP4B
+```{r coefs_tis_larp, fig.width=5, fig.height=4}
+df_train %>% 
+    summarize(across(everything(), mean)) %>% 
+    slice(rep(1, N_STEPS)) %>%
+    mutate(TIS11B_CLIP=seq(-10, 10, length.out=N_STEPS)) %>%
+    slice(rep(1:N_STEPS, times=N_STEPS)) %>%
+    mutate(LARP4B_exon_CLIP=rep(seq(-10,10, length.out=N_STEPS), each=N_STEPS)) %>%
+    mutate(category=predict(object=model, .)) %>%
+    ggplot(aes(x=TIS11B_CLIP, y=LARP4B_exon_CLIP, fill=category)) +
+    geom_tile(linejoin="bevel") +
+    scale_fill_manual(values=LOC_COLORS) +
+    theme_bw()
+
+ggsave("img/extend/lr-pairs-tis11b-larp4b.pdf", width=5, height=4, dpi=300)
+```
+
+#### TIA1L1, LARP4B
+```{r coefs_tia_larp, fig.width=5, fig.height=4}
+df_train %>% 
+    summarize(across(everything(), mean)) %>% 
+    slice(rep(1, N_STEPS)) %>%
+    mutate(TIA1_L1_CLIP=seq(-10, 10, length.out=N_STEPS)) %>%
+    slice(rep(1:N_STEPS, times=N_STEPS)) %>%
+    mutate(LARP4B_exon_CLIP=rep(seq(-10,10, length.out=N_STEPS), each=N_STEPS)) %>%
+    mutate(category=predict(object=model, .)) %>%
+    ggplot(aes(x=TIA1_L1_CLIP, y=LARP4B_exon_CLIP, fill=category)) +
+    geom_tile(linejoin="bevel") +
+    scale_fill_manual(values=LOC_COLORS) +
+    theme_bw()
+
+ggsave("img/extend/lr-pairs-tia1l1-larp4b.pdf", width=5, height=4, dpi=300)
+```
+
+#### mRNA length, CDS exon length
+```{r coefs_mrna_cds, fig.width=5, fig.height=4}
+df_train %>% 
+    summarize(across(everything(), mean)) %>% 
+    slice(rep(1, N_STEPS)) %>%
+    mutate(mane_mRNA_length=seq(-10, 10, length.out=N_STEPS)) %>%
+    slice(rep(1:N_STEPS, times=N_STEPS)) %>%
+    mutate(mane_mean_cds_exon_length_all=rep(seq(-10,10, length.out=N_STEPS), each=N_STEPS)) %>%
+    mutate(category=predict(object=model, .)) %>%
+    ggplot(aes(x=mane_mRNA_length, y=mane_mean_cds_exon_length_all, fill=category)) +
+    geom_tile(linejoin="bevel") +
+    scale_fill_manual(values=LOC_COLORS) +
+    theme_bw()
+
+ggsave("img/extend/lr-pairs-mRNAlength-cdsexonavg.pdf", width=5, height=4, dpi=300)
+```
+
+# Plot Predicted
+## Ternary
+```{r plot_predicted_tern, fig.width=5, fig.height=5, warning=FALSE, message=FALSE}
+df_train %>%
+    mutate(predicted=predict(model, .)) %>%
+    cbind(df_tiger[idx_train, c("npco_er", "npco_cy", "npco_tg")]) %>%
+    filter(category != "DF") %>%
+    ggtern(aes(x=npco_er, y=npco_cy, z=npco_tg, color=predicted)) +
+    geom_density_tern(size=0.5) +
+    geom_point(size=0.1, alpha=0.3) +
+    geom_Lline(Lintercept=0.4, linetype='dashed') + 
+    geom_Rline(Rintercept=0.4, linetype='dashed') + 
+    geom_Tline(Tintercept=0.4, linetype='dashed') +
+    scale_color_manual(values=LOC_COLORS_DARK) +
+    labs(x="ER", y="CY", z="TG", title="Training Set") +
+    guides(color="none") +
+    theme_bw()
+
+ggsave("img/extend/lr-predict-train.pdf", width=5, height=5, dpi=300)
+
+df_test %>%
+    mutate(predicted=predict(model, .)) %>%
+    cbind(df_tiger[-idx_train, c("npco_er", "npco_cy", "npco_tg")]) %>%
+    filter(category != "DF") %>%
+    ggtern(aes(x=npco_er, y=npco_cy, z=npco_tg, color=predicted)) +
+    geom_density_tern(size=0.5) +
+    geom_point(size=0.1, alpha=0.3) +
+    geom_Lline(Lintercept=0.4, linetype='dashed') + 
+    geom_Rline(Rintercept=0.4, linetype='dashed') + 
+    geom_Tline(Tintercept=0.4, linetype='dashed') +
+    scale_color_manual(values=LOC_COLORS_DARK) +
+    labs(x="ER", y="CY", z="TG", title="Test Set") +
+    guides(color="none") +
+    theme_bw()
+
+ggsave("img/extend/lr-predict-test.pdf", width=5, height=5, dpi=300)
+```
+
+## Confusion Matrix
+```{r plot_predicted_confusion, fig.width=5, fig.height=4}
+df_train %>%
+    mutate(predicted=predict(model, .)) %>%
+    count(category, predicted) %>% 
+    ggplot(aes(category, predicted, fill=n)) +
+    geom_tile() + geom_text(aes(label=n)) +
+    scale_fill_gradient(low="white") +
+    labs(title="Training Set", x="True Category", y="Predicted Category") +
+    theme_light()
+
+df_train %>%
+    mutate(predicted=predict(model, .)) %$%
+    confusionMatrix(predicted, category)
+
+df_test %>%
+    mutate(predicted=predict(model, .)) %>%
+    count(category, predicted) %>% 
+    ggplot(aes(category, predicted, fill=n)) +
+    geom_tile() + geom_text(aes(label=n)) +
+    scale_fill_gradient(low="white") +
+    labs(title="Test Set", x="True Category", y="Predicted Category") +
+    theme_light()
+
+df_test %>%
+    mutate(predicted=predict(model, .)) %$%
+    confusionMatrix(predicted, category)
+```
+
+
+---
+
+# Runtime Details
+## Session Info
+```{r sesh_info, echo=FALSE}
+sessionInfo()
+```
+
+## Conda Environment
+```{bash comment="", echo=FALSE}
+if ! command -v conda &> /dev/null
+then
+  echo "Conda not detected."
+elif [ -z "${CONDA_PREFIX}" ]
+then
+  echo "No active Conda environment."
+else
+  echo "## Conda Environment YAML"
+  conda env export
+fi
+```

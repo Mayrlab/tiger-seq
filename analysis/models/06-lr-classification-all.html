@@ -11,7 +11,7 @@
 
 <meta name="author" content="Mervin M Fansler" />
 
-<meta name="date" content="2022-10-19" />
+<meta name="date" content="2023-08-09" />
 
 <title>Logistic Regression Classification - Full</title>
 
@@ -1582,7 +1582,7 @@ border-radius: 0px;
 <h1 class="title toc-ignore">Logistic Regression Classification -
 Full</h1>
 <h4 class="author">Mervin M Fansler</h4>
-<h4 class="date">19 October 2022</h4>
+<h4 class="date">09 August 2023</h4>
 
 </div>
 
@@ -1726,6 +1726,8 @@ COVARIATES=c(
 ## iter  90 value 7603.583206
 ## final  value 7603.582963 
 ## converged</code></pre>
+<pre class="r"><code>deviance(model)</code></pre>
+<pre><code>## [1] 15207.17</code></pre>
 <pre class="r"><code>AIC(model)</code></pre>
 <pre><code>## [1] 15405.17</code></pre>
 <pre class="r"><code>tidy(model) %&gt;% 
@@ -2552,6 +2554,20 @@ COVARIATES=c(
 tidy(model) %&gt;%
     arrange(p.value) %&gt;%
     write_xlsx(outfile)</code></pre>
+</div>
+<div id="pseudo-r-squared" class="section level3">
+<h3>Pseudo-R-squared</h3>
+<pre class="r"><code>model_null &lt;- multinom(category ~ 1, data=df_scaled, maxit=1000)</code></pre>
+<pre><code>## # weights:  8 (3 variable)
+## initial  value 9724.854943 
+## final  value 8795.503785 
+## converged</code></pre>
+<pre class="r"><code>sprintf(&quot;Residual Deviance = %0.4f&quot;, deviance(model))</code></pre>
+<pre><code>## [1] &quot;Residual Deviance = 15207.1659&quot;</code></pre>
+<pre class="r"><code>sprintf(&quot;Null Residual Deviance = %0.4f&quot;, deviance(model_null))</code></pre>
+<pre><code>## [1] &quot;Null Residual Deviance = 17591.0076&quot;</code></pre>
+<pre class="r"><code>sprintf(&quot;Pseudo-R^2 = %0.4f&quot;, 1 - deviance(model)/deviance(model_null))</code></pre>
+<pre><code>## [1] &quot;Pseudo-R^2 = 0.1355&quot;</code></pre>
 </div>
 <div id="model-accuracy" class="section level3">
 <h3>Model Accuracy</h3>

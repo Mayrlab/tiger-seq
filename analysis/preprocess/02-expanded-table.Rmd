@@ -1,0 +1,98 @@
+---
+title: "Add MANE Annotations to Table"
+author: "Mervin M Fansler"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: 
+  html_document: 
+    code_folding: show
+    toc: true
+    toc_float: true
+    df_print: paged
+---
+
+# Purpose
+
+Here we extend the original table used in processing with gene architecture annotations.
+
+# Initialization
+
+## Libraries
+```{r libs, message=FALSE, warning=FALSE}
+library(magrittr)
+library(tidyverse)
+library(readxl)
+library(writexl)
+```
+
+## Parameters
+```{r set_params}
+## in files
+RDS_IN="data/df_tiger_clean.Rds"
+XLSX_MANE="data/gene_annots_mane.xlsx"
+
+## out files
+CSV_OUT="data/df_tiger_extend.csv"
+RDS_OUT="data/df_tiger_extend.Rds"
+```
+
+
+# Data
+## Loading
+```{r load_data, message=FALSE}
+df_tiger <- readRDS(RDS_IN)
+
+df_mane <- read_xlsx(XLSX_MANE) %>% 
+    `[`(,c(4,5,57:67)) %>%
+    dplyr::rename(gene_name=`Gene...4`, refseq_id=Refseq_ID) %>%
+    rename_with(~ str_c("mane_", .x), .cols=-c(1,2))
+
+df_tiger_extend <- left_join(df_tiger, df_mane, by=c("gene_name", "refseq_id"))
+```
+
+
+### Data Checking
+```{r check_data}
+df_tiger_extend %>%
+    count(category) %>%
+    knitr::kable()
+
+df_tiger_extend %>% 
+    summarize(across(starts_with("mane"), 
+                 list(nna= ~sum(is.na(.x)),
+                      nzero= ~sum(.x == 0, na.rm=TRUE),
+                      min= ~min(.x, na.rm=TRUE),
+                      mean= ~mean(.x, na.rm=TRUE), 
+                      median= ~median(.x, na.rm=TRUE),
+                      max= ~max(.x, na.rm=TRUE)))) %>%
+    pivot_longer(everything(), names_pattern="^(.*)_([^_]+)$", 
+                 names_to=c("covariate", "stat"), values_to="value") %>%
+    pivot_wider(id_cols="covariate", names_from=stat, values_from=value)
+```
+
+# Export Clean Table
+```{r export}
+saveRDS(df_tiger_extend, RDS_OUT)
+write_csv(df_tiger_extend, CSV_OUT)
+```
+
+---
+
+# Runtime Details
+## Session Info
+```{r sesh_info, echo=FALSE}
+sessionInfo()
+```
+
+## Conda Environment
+```{bash comment="", echo=FALSE}
+if ! command -v conda &> /dev/null
+then
+  echo "Conda not detected."
+elif [ -z "${CONDA_PREFIX}" ]
+then
+  echo "No active Conda environment."
+else
+  echo "## Conda Environment YAML"
+  conda env export
+fi
+```
