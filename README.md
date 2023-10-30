@@ -26,24 +26,26 @@ and therefore are not needed to be rerun. Anyone wishing to do further analysis 
 replicate the models should be able to immediately run the `03-models` files.
 
 ### Input Data
-The `data` folder contains the input data. We provide clean versions. Raw data versions
-(needed to run the `01-preprocess` code) can be provide upon reasonable request.
+The `data` folder contains the input data. We provide clean versions of the tables
+corresponding to the output of the scripts in `01-preprocess`. Raw data versions 
+(needed to run the `01-preprocess` code) can be provided upon reasonable request.
 
 ### Execution Environment
-The R instance used execute the files is captured both in the rendered RMDs themselves
-(see **Runtime Details** section in HTMLs) and provided as YAML files in the `
+The R instance used to execute the files is captured both in the rendered RMDs themselves
+(see **Runtime Details** section in HTMLs) and provided as YAML files in the `envs` folder.
 
-To recreate on arbitrary platforms (Linux or MacOS), we recommend using [Micromamba](https://mamba.readthedocs.io/en/latest/user_guide/micromamba.html#)
+To recreate on arbitrary platforms (Linux or MacOS), we recommend using 
+[Micromamba](https://mamba.readthedocs.io/en/latest/user_guide/micromamba.html#)
 and the minimal YAML (`*.min.yaml`):
 
-```
+```bash
 micromamba create -n brms_r41 -f envs/brms_r41.min.yaml
 micromamba activate brms_r41
 ```
 
-A full capture is also provided (`*.full.yaml`). This is only expected to recreate 
-on the **osx-64** platform and is primarly intended for *exact* replication and a 
-statement of record.
+A fullly-solved environment capture is also provided (`*.full.yaml`). This is only 
+expected to recreate on the **osx-64** platform and is primarly intended for *exact* 
+replication and a statement of record.
 
 ### Outputs
 The `img` and `tbl` folders have output files that the source code will generate.
