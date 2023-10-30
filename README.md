@@ -12,6 +12,10 @@ The folders in the repository have the following purposes:
 - `img` - *output* images
 - `tbl` - *output* tables
 
+All code is expected to be executed with this repository as the present working
+directory. If opening as an R Project in RStudio, make sure to set the Project 
+folder as the working directory.
+
 ### Source Code
 The primary source code is found in the `analysis` folder. 
 Folders and files are numbered in the expected order of execution.
