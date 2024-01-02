@@ -1,9 +1,7 @@
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.10056210.svg)](https://doi.org/10.5281/zenodo.10056210)
 
 ## Overview
-This repository contains computational analysis used in Horste et al., 2023.
-
-A preprint version of the article is [available on BioRxiv](https://doi.org/10.1101/2022.11.04.515216).
+This repository contains computational analysis used in [Horste et al., *Mol. Cell*, 2023](https://doi.org/10.1016/j.molcel.2023.11.025).
 
 ## Organization
 The folders in the repository have the following purposes:
@@ -43,7 +41,7 @@ micromamba create -n brms_r41 -f envs/brms_r41.min.yaml
 micromamba activate brms_r41
 ```
 
-A fullly-solved environment capture is also provided (`*.full.yaml`). This is only 
+A fully-solved environment capture is also provided (`*.full.yaml`). This is only 
 expected to recreate on the **osx-64** platform and is primarly intended for *exact* 
 replication and a statement of record.
 
