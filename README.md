@@ -1,7 +1,7 @@
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.10056210.svg)](https://doi.org/10.5281/zenodo.10056210)
 
 ## Overview
-This repository contains computational analysis used in [Horste et al., *Mol. Cell*, 2023](https://doi.org/10.1016/j.molcel.2023.11.025).
+This repository contains computational analysis used in [Horste et al., *Mol. Cell*, 2023](https://doi.org/10.1016/j.molcel.2023.11.025) ([PMID: 38134885](https://pubmed.ncbi.nlm.nih.gov/38134885/)).
 
 ## Organization
 The folders in the repository have the following purposes:
